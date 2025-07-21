@@ -35,24 +35,39 @@ impl ReportingService {
     }
 
     async fn keep_connection_alive(&self) -> Result<()> {
+        let mut client = reqwest::Client::new();
         let status_update_rx = self.status_update_tx.subscribe();
         let stream = BroadcastStream::new(status_update_rx);
         let reqwest_body = reqwest::Body::wrap_stream(stream);
 
         info!("Establishing connection with management server");
 
-        match reqwest::Client::new()
-            .post(self.stats_endpoint_url.to_owned())
-            .body(reqwest_body)
-            .send()
-            .await
-        {
-            Ok(_) => {
-                error!("Management server connection closed");
-
-                Ok(())
+        let mut attempt = 0;
+        loop {
+            match client
+                .post(self.stats_endpoint_url.to_owned())
+                .body(reqwest_body.clone())
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        info!("Successfully sent status update");
+                        return Ok(());
+                    } else {
+                        error!("Received non-success status: {}", response.status());
+                    }
+                }
+                Err(err) => {
+                    error!("Failed to send status update: {}", err);
+                }
             }
-            Err(err) => Err(err.into()),
+
+            // Exponential backoff
+            attempt += 1;
+            let delay = Duration::from_secs(2_u64.pow(attempt.min(5)));
+            info!("Retrying in {} seconds...", delay.as_secs());
+            tokio::time::sleep(delay).await;
         }
     }
 }

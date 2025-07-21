@@ -47,6 +47,8 @@ async fn respond(
 
     info!("Registering agent: {}", path_params.agent_id);
 
+    let mut error_response: Option<Result<HttpResponse, Error>> = None;
+
     while let Some(chunk) = payload.next().await {
         match serde_json::from_slice::<StatusUpdate>(&chunk?) {
             Ok(status_update) => {
@@ -60,15 +62,29 @@ async fn respond(
 
                     error!("{msg}");
 
-                    return Ok(HttpResponse::InternalServerError().body(msg));
+                    // Store error but continue processing
+                    error_response = Some(Ok(HttpResponse::InternalServerError().body(msg)));
                 }
             }
             Err(err) => {
                 error!("Failed to parse status update: {err}");
-
-                return Err(Error::from(err));
+                error_response = Some(Err(Error::from(err)));
             }
         }
+
+        // Exit loop if we have an error response
+        if error_response.is_some() {
+            break;
+        }
+    }
+
+    // Consume remaining chunks if there was an error
+    if let Some(ref err_resp) = error_response {
+        while let Some(chunk) = payload.next().await {
+            // Just consume the chunk, ignore errors
+            let _ = chunk;
+        }
+        return err_resp.clone();
     }
 
     Ok(HttpResponse::Accepted().finish())
