@@ -203,63 +203,41 @@ impl ProxyHttp for ProxyService {
                         if content_type_str.contains("application/json") {
                             // Enable retry buffering to preserve the request body, reference: https://github.com/cloudflare/pingora/issues/349#issuecomment-2377277028
                             session.enable_retry_buffering();
-                            session.read_body_or_idle(false).await.unwrap().unwrap();
-                            let request_body = session.get_retry_buffer();
+                            let mut found_model = None;
+                            let re = regex::bytes::Regex::new(r#""model"\s*:\s*["']([^"']*)["']"#).unwrap();
 
-                            if let Some(body_bytes) = request_body {
-                                match std::str::from_utf8(&body_bytes) {
-                                    Ok(_) => {
-                                        // The bytes are valid UTF-8, proceed as normal
-                                        if let Ok(json_value) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
-                                            if let Some(model) = json_value.get("model").and_then(|v| v.as_str()) {
-                                                ctx.requested_model = Some(model.to_string());
-                                                info!("Model in request: {:?}", ctx.requested_model);
-                                            }
-                                        } else {
-                                            info!("Failed to parse JSON payload, trying regex extraction");
-                                            let body_str = String::from_utf8_lossy(&body_bytes).to_string();
-                                            let re = regex::Regex::new(r#""model"\s*:\s*["']([^"']*)["']"#).unwrap();
-                                            if let Some(caps) = re.captures(&body_str) {
-                                                if let Some(model) = caps.get(1) {
-                                                    ctx.requested_model = Some(model.as_str().to_string());
-                                                    info!("Model via regex: {:?}", ctx.requested_model);
+                            // Read the body in chunks to find the model parameter efficiently
+                            loop {
+                                match session.read_body_or_idle(false).await {
+                                    Ok(Some(_)) => {
+                                        // Get what has been collected in the retry buffer so far
+                                        if let Some(full_body_so_far) = session.get_retry_buffer() {
+                                            // Use regex on the raw bytes directly to avoid heavy String cloning
+                                            if let Some(caps) = re.captures(&full_body_so_far) {
+                                                if let Some(m) = caps.get(1) {
+                                                    found_model = Some(String::from_utf8_lossy(m.as_bytes()).into_owned());
+                                                    info!("Model found in request: {:?}", found_model);
+                                                    break; // SUCCESS: Stop reading chunks immediately
                                                 }
-                                            } else {
-                                                info!("Failed to extract model using regex");
                                             }
                                         }
-                                    },
-                                    Err(e) => {
-                                        // Invalid UTF-8 detected. Truncate to the last valid UTF-8 boundary.
-                                        let valid_up_to = e.valid_up_to();
-                                        info!("Invalid UTF-8 detected. Truncating from {} bytes to {} bytes.", body_bytes.len(), valid_up_to);
 
-                                        // Create a new `Bytes` slice containing only the valid UTF-8 part.
-                                        let valid_body_bytes = body_bytes.slice(0..valid_up_to);
-
-                                        // Now proceed with the (truncated) valid_body_bytes
-                                        if let Ok(json_value) = serde_json::from_slice::<serde_json::Value>(&valid_body_bytes) {
-                                            if let Some(model) = json_value.get("model").and_then(|v| v.as_str()) {
-                                                ctx.requested_model = Some(model.to_string());
-                                                info!("Model in request (after truncation): {:?}", ctx.requested_model);
-                                            }
-                                        } else {
-                                            info!("Failed to parse JSON payload (after truncation), trying regex extraction");
-                                            let body_str = String::from_utf8_lossy(&valid_body_bytes).to_string();
-                                            let re = regex::Regex::new(r#""model"\s*:\s*["']([^"']*)["']"#).unwrap();
-                                            if let Some(caps) = re.captures(&body_str) {
-                                                if let Some(model) = caps.get(1) {
-                                                    ctx.requested_model = Some(model.as_str().to_string());
-                                                    info!("Model via regex (after truncation): {:?}", ctx.requested_model);
-                                                }
-                                            } else {
-                                                info!("Failed to extract model using regex (after truncation)");
-                                            }
+                                        // Safety Check: Don't let the buffer grow infinitely
+                                        // if we can't find the model key in the first 2048KB
+                                        if session.get_retry_buffer().map_or(0, |b| b.len()) > 2_048_000 {
+                                            break;
                                         }
                                     }
+                                    Ok(None) => break, // End of body reached
+                                    Err(e) => return Err(e),
                                 }
+                            }
+
+                            // If we found the model, set it in the context
+                            if let Some(model) = found_model {
+                                ctx.requested_model = Some(model);
                             } else {
-                                info!("Request body is None");
+                                info!("Model not found in request body");
                             }
                         }
                     }
