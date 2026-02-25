@@ -3,6 +3,7 @@ mod given_agent_is_running;
 mod given_agent_monitors_llamacpp_every_milliseconds;
 mod given_balancer_allows_cors_host;
 mod given_balancer_is_running;
+mod given_balancer_is_running_with_check_model;
 mod given_balancer_reports_metrics_every_milliseconds;
 mod given_buffered_requests_timeout_after_milliseconds;
 mod given_llamacpp_completes_response_after_milliseconds;
