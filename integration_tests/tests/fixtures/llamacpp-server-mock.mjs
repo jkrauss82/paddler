@@ -30,7 +30,7 @@ for (let i = 0; i < slotsInt; i += 1) {
 }
 
 const server = createServer(function (req, res) {
-  if (req.url === "/chat/completions") {
+  if (req.url === "/chat/completions" || req.url === "/v1/chat/completions") {
     const requestName = req.headers["x-request-name"];
 
     if (!requestName) {
