@@ -5,7 +5,7 @@ use reqwest::Method;
 
 use crate::paddler_world::PaddlerWorld;
 
-#[when(expr = "When request {string} is sent to {string} with:")]
+#[when(expr = "request {string} is sent to {string} with:")]
 pub async fn when_request_is_sent_to_path(
     world: &mut PaddlerWorld,
     step: &Step,
