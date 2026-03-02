@@ -14,7 +14,7 @@ pub async fn when_request_is_sent_to_path(
 ) -> Result<()> {
     let client = reqwest::Client::new();
     let mut request_builder = client.get(format!("http://127.0.0.1:8096{path}"));
-    request_builder = request_builder.header("X-Request-Name", name.clone());
+    request_builder = request_builder.header("x-request-name", name.clone());
 
     if let Some(table) = step.table.as_ref() {
         for row in table.rows.iter() {
@@ -32,7 +32,7 @@ pub async fn when_request_is_sent_to_path(
                         "PATCH" => client.patch(format!("http://127.0.0.1:8096{path}")),
                         _ => client.request(method.parse::<Method>()?, format!("http://127.0.0.1:8096{path}")),
                     };
-                    request_builder = request_builder.header("X-Request-Name", name.clone());
+                    request_builder = request_builder.header("x-request-name", name.clone());
                 }
                 "header" => {
                     let parts: Vec<&str> = value.splitn(2, ':').collect();
@@ -50,7 +50,17 @@ pub async fn when_request_is_sent_to_path(
         }
     }
 
-    let response = request_builder.send().await?;
+    let response = match request_builder.send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "Failed to send request '{}' to '{}': {}",
+                name,
+                path,
+                e
+            ));
+        }
+    };
 
     world.responses.insert(name, response);
 

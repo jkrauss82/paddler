@@ -4,7 +4,9 @@ Feature: Balance llama.cpp requests
     Scenario: There are no agents attached
         Given buffered requests timeout after 0 milliseconds
         Given balancer is running
-        When request "foo" is sent to "/chat/completions"
+        When request "foo" is sent to "/chat/completions" with:
+          | method | POST |
+          | body   | {"messages": [{"role": "user", "content": "hello world"}]} |
         Then "foo" response code is 504
 
     @serial
@@ -13,7 +15,9 @@ Feature: Balance llama.cpp requests
         Given llama.cpp server "llama-1" is running (has 4 slots)
         Given agent "agent-1" is running (observes "llama-1")
         Given agent "agent-1" is registered
-        When request "foo" is sent to "/chat/completions"
+        When request "foo" is sent to "/chat/completions" with:
+          | method | POST |
+          | body   | {"messages": [{"role": "user", "content": "hello world"}]} |
         Then "foo" response code is 200
         Then "foo" request landed in "llama-1"
 

@@ -28,8 +28,11 @@ pub async fn when_multiple_requests_are_sent_to_path(
                 sleep(Duration::from_millis(50 * row_index as u64)).await;
 
                 let response = client_clone
-                    .get(format!("http://127.0.0.1:8096{path_clone}"))
+                    .post(format!("http://127.0.0.1:8096{path_clone}"))
                     .header("X-Request-Name", request_name.clone())
+                    .body(serde_json::json!({
+                        "messages": [{"role": "user", "content": "hello world"}]
+                    }).to_string())
                     .send()
                     .await;
 
