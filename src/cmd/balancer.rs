@@ -10,6 +10,7 @@ use pingora::server::configuration::Opt;
 use pingora::server::Server;
 
 use crate::balancer::management_service::ManagementService;
+use crate::balancer::peer_reaper_service::PeerReaperService;
 use crate::balancer::proxy_service::ProxyService;
 #[cfg(feature = "statsd_reporter")]
 use crate::balancer::statsd_service::StatsdService;
@@ -58,6 +59,9 @@ pub fn handle(
     proxy_service.add_tcp(&reverseproxy_addr.clone().to_string());
 
     pingora_server.add_service(proxy_service);
+    pingora_server.add_service(PeerReaperService::new(
+        upstream_peer_pool.clone(),
+    ));
     pingora_server.add_service(ManagementService::new(
         *management_addr,
         management_cors_allowed_hosts,

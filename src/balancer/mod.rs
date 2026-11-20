@@ -1,5 +1,6 @@
 pub mod http_route;
 pub mod management_service;
+pub mod peer_reaper_service;
 pub mod proxy_service;
 pub mod request_context;
 pub mod status_update;

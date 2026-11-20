@@ -153,6 +153,14 @@ export function AgentsList({ agents }: { agents: Array<Agent> }) {
           quarantined_until,
           status,
         }: Agent) {
+          // A quarantine is only active while its deadline is in the future;
+          // once it has passed the agent is released back to normal.
+          const activeQuarantineUntil =
+            quarantined_until !== null &&
+            quarantined_until.secs_since_epoch * 1000 > Date.now()
+              ? quarantined_until.secs_since_epoch
+              : null;
+
           const hasIssues =
             status.error ||
             true !== status.is_authorized ||
@@ -162,7 +170,7 @@ export function AgentsList({ agents }: { agents: Array<Agent> }) {
             true === status.is_deserialize_error ||
             true === status.is_unexpected_response_status ||
             true !== status.is_slots_endpoint_enabled ||
-            quarantined_until;
+            activeQuarantineUntil !== null;
 
           return (
               <tr
@@ -213,10 +221,10 @@ export function AgentsList({ agents }: { agents: Array<Agent> }) {
                     </p>
                   </>
                 )}
-                {quarantined_until && (
+                {activeQuarantineUntil !== null && (
                   <p>
                     Quarantined until{" "}
-                    {formatTimestamp(quarantined_until.secs_since_epoch)}
+                    {formatTimestamp(activeQuarantineUntil)}
                   </p>
                 )}
                 {!hasIssues && <p>None</p>}
