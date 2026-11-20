@@ -35,7 +35,11 @@ impl UpstreamPeer {
     }
 
     pub fn is_usable(&self) -> bool {
-        !self.status.has_issues() && self.status.slots_idle > 0 && self.quarantined_until.is_none()
+        let not_quarantined = self
+            .quarantined_until
+            .is_none_or(|until| SystemTime::now() >= until);
+
+        !self.status.has_issues() && self.status.slots_idle > 0 && not_quarantined
     }
 
     pub fn supports_model(&self, requested_model: &str) -> bool {
@@ -213,5 +217,49 @@ mod tests {
         assert_eq!(peer.status.slots_idle, 0);
         assert_eq!(peer.status.slots_processing, 0);
         assert_eq!(peer.status.agent_name, Some("new_name".to_string()));
+    }
+
+    fn make_healthy(peer: &mut UpstreamPeer) {
+        // `create_test_peer` leaves the error flags as `None`, which
+        // `has_issues()` treats as issues. Set them explicitly so the peer is
+        // genuinely healthy and usability hinges solely on the quarantine.
+        peer.status.is_authorized = Some(true);
+        peer.status.is_connect_error = Some(false);
+        peer.status.is_decode_error = Some(false);
+        peer.status.is_deserialize_error = Some(false);
+        peer.status.is_request_error = Some(false);
+        peer.status.is_unexpected_response_status = Some(false);
+        peer.status.error = None;
+    }
+
+    #[test]
+    fn test_expired_quarantine_releases_peer() {
+        use std::time::Duration;
+
+        let mut peer = create_test_peer();
+        make_healthy(&mut peer);
+
+        // Simulate a quarantine whose deadline has already passed.
+        peer.quarantined_until = Some(SystemTime::now() - Duration::from_secs(1));
+
+        // The peer is healthy otherwise, so once the quarantine window has
+        // elapsed it must be usable again — even without a fresh status update.
+        assert!(
+            peer.is_usable(),
+            "peer should be usable after its quarantine deadline has passed"
+        );
+    }
+
+    #[test]
+    fn test_active_quarantine_blocks_peer() {
+        use std::time::Duration;
+
+        let mut peer = create_test_peer();
+        make_healthy(&mut peer);
+
+        // Simulate a quarantine that is still in effect.
+        peer.quarantined_until = Some(SystemTime::now() + Duration::from_secs(10));
+
+        assert!(!peer.is_usable(), "peer should not be usable while quarantined");
     }
 }
