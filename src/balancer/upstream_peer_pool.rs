@@ -132,6 +132,44 @@ impl UpstreamPeerPool {
         Ok(())
     }
 
+    /// Remove peers that have not reported a status update within `max_age`.
+    ///
+    /// This reaps "zombie" peers whose agent process died without closing its
+    /// status-update connection (e.g. killed uncleanly), so they don't linger in
+    /// the pool — and the dashboard — indefinitely. Returns the agent IDs that
+    /// were removed.
+    pub fn reap_stale_peers(&self, max_age: Duration) -> Result<Vec<String>> {
+        let now = SystemTime::now();
+
+        let removed_ids = self.with_agents_write(|agents| {
+            let mut removed_ids = Vec::new();
+
+            agents.retain(|peer| {
+                // A peer is stale only if we can measure its age and it exceeds
+                // `max_age`. If the clock went backwards (`duration_since` is
+                // `Err`), we keep the peer rather than risk reaping a live one.
+                let is_stale = matches!(
+                    now.duration_since(peer.last_update),
+                    Ok(age) if age > max_age
+                );
+
+                if is_stale {
+                    removed_ids.push(peer.agent_id.clone());
+                }
+
+                !is_stale
+            });
+
+            Ok(removed_ids)
+        })?;
+
+        if !removed_ids.is_empty() {
+            self.update_notifier.notify_waiters();
+        }
+
+        Ok(removed_ids)
+    }
+
     pub fn restore_integrity(&self) -> Result<()> {
         self.with_agents_write(|agents| {
             agents.sort();
@@ -273,6 +311,60 @@ mod tests {
 
         assert_eq!(best_peer.agent_id, "test1");
         assert_eq!(best_peer.status.slots_idle, 5);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reap_stale_peers() -> Result<()> {
+        use std::time::Duration;
+        use std::time::SystemTime;
+
+        let pool = UpstreamPeerPool::new();
+
+        pool.register_status_update("fresh", mock_status_update("fresh", 5, 0))?;
+        pool.register_status_update("stale", mock_status_update("stale", 5, 0))?;
+
+        // Age the "stale" peer's last_update beyond the max age.
+        pool.with_agents_write(|agents| {
+            if let Some(peer) = agents.iter_mut().find(|p| p.agent_id == "stale") {
+                peer.last_update = SystemTime::now() - Duration::from_secs(60);
+            }
+
+            Ok(())
+        })?;
+
+        let removed = pool.reap_stale_peers(Duration::from_secs(30))?;
+
+        assert_eq!(removed, vec!["stale".to_string()]);
+
+        // The fresh peer remains; the stale peer is gone.
+        let agent_ids = pool.with_agents_read(|agents| {
+            Ok(agents.iter().map(|p| p.agent_id.clone()).collect::<Vec<String>>())
+        })?;
+        assert_eq!(agent_ids, vec!["fresh".to_string()]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reap_stale_peers_keeps_recent_peers() -> Result<()> {
+        use std::time::Duration;
+
+        let pool = UpstreamPeerPool::new();
+
+        pool.register_status_update("a", mock_status_update("a", 5, 0))?;
+        pool.register_status_update("b", mock_status_update("b", 3, 0))?;
+
+        // Both peers just reported, so nothing should be reaped.
+        let removed = pool.reap_stale_peers(Duration::from_secs(30))?;
+
+        assert!(removed.is_empty());
+
+        let agent_ids = pool.with_agents_read(|agents| {
+            Ok(agents.iter().map(|p| p.agent_id.clone()).collect::<Vec<String>>())
+        })?;
+        assert_eq!(agent_ids.len(), 2);
 
         Ok(())
     }
